@@ -71,13 +71,95 @@ Likely affected files are included in the issue itself, which I copied here:
 
 [Notes on setting up your local development environment - challenges you faced, how you solved them]
 
-I am currently reviewing the GraphQL Hive contribution documentation and setting up the local development environment. Since this issue is focused on Redis configuration rather than GraphQL functionality, my primary goal is understanding how environment variables are validated and passed into Redis client instances throughout the codebase.
+I set up the GraphQL Hive repository locally on macOS using the project's documented setup process. The repository uses a pnpm monorepo and Docker-based local infrastructure. I used AI to run the project and iterate as problems came.
+
+Commands used:
+
+```bash
+pnpm install
+pnpm local:setup
+pnpm generate
+pnpm build
+```
+
+Setup challenges encountered:
+
+- My local shell was using Node v20, while the repository requires Node v24.14.1.
+- Docker Desktop was not running initially.
+- The root `.env` file was missing and needed to be created with `ENVIRONMENT=local`.
+- `pnpm generate` initially failed due to local Postgres access restrictions.
+- `pnpm build` initially failed due to a local IPC permission issue.
+
+After resolving these issues:
+
+- Docker services started successfully.
+- Postgres and ClickHouse migrations completed.
+- `pnpm generate` completed successfully.
+- `pnpm build` completed successfully (22/22 tasks passed).
+
+A separate runtime dependency issue (`fakePromise` export error) prevented full `pnpm dev:hive` startup, but it was unrelated to Redis and did not block investigation of issue #8140.
 
 ### Steps to Reproduce
 
-1. [Step 1]
-2. [Step 2]
-3. [Observed result]
+1. Confirm Redis is running locally:
+
+```bash
+docker exec hive-dev-redis-1 redis-cli PING
+```
+
+Observed result:
+
+```text
+PONG
+```
+
+
+2. Create a Redis ACL user and disable the default user:
+
+```bash
+docker exec hive-dev-redis-1 redis-cli ACL SETUSER hive on '>hivepass' allcommands allkeys
+docker exec hive-dev-redis-1 redis-cli ACL SETUSER default off
+```
+
+3. Verify username/password authentication succeeds:
+
+```bash
+docker exec hive-dev-redis-1 redis-cli -u redis://hive:hivepass@localhost:6379 PING
+```
+
+Observed result:
+
+```text
+PONG
+```
+
+4. Verify password-only authentication fails:
+
+```bash
+docker exec hive-dev-redis-1 redis-cli -a hivepass PING
+```
+
+Observed result:
+
+```text
+AUTH failed: ERR AUTH <password> called without any password configured for the default user.
+NOAUTH Authentication required.
+```
+
+5. Trace the Redis configuration flow in the GraphQL Hive codebase.
+
+Observed result:
+
+- `REDIS_PASSWORD` is supported.
+- `REDIS_USERNAME` does not exist.
+- Redis client constructors do not receive a `username` option.
+
+### Reproduction Evidence
+
+- **Branch:** `fix-issue-8140`
+- **Screenshots/logs:** Redis CLI output shown above.
+- **My findings:** Redis ACL deployments can require both a username and password. Local testing confirmed that username/password authentication succeeds while password-only authentication fails when the default Redis user is disabled. GraphQL Hive currently has no `REDIS_USERNAME` environment variable or configuration path, so Redis usernames cannot be passed into `ioredis`.
+
 
 ### Reproduction Evidence
 
