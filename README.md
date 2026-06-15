@@ -160,43 +160,94 @@ Observed result:
 - **Screenshots/logs:** Redis CLI output shown above.
 - **My findings:** Redis ACL deployments can require both a username and password. Local testing confirmed that username/password authentication succeeds while password-only authentication fails when the default Redis user is disabled. GraphQL Hive currently has no `REDIS_USERNAME` environment variable or configuration path, so Redis usernames cannot be passed into `ioredis`.
 
-
-### Reproduction Evidence
-
-- **Commit showing reproduction:** [Link to commit in your fork]
-- **Screenshots/logs:** [If applicable]
-- **My findings:** [What you discovered during reproduction]
-
 ---
 
 ## Solution Approach
 
 ### Analysis
 
-[Your analysis of the root cause - what's causing the issue?]
+GraphQL Hive local setup completed through `pnpm install`, `pnpm local:setup`, `pnpm generate`, and `pnpm build`. The full `pnpm dev:hive` startup is currently blocked by an unrelated dependency/runtime error:
+
+```text
+SyntaxError: The requested module '@graphql-tools/utils' does not provide an export named 'fakePromise'
+```
+
+This does not prevent investigating issue `#8140`, because the Redis ACL behavior can be reproduced independently.
+
+Redis ACL reproduction succeeded: a named Redis user `hive` with password `hivepass` could authenticate successfully, while password-only/default-user authentication failed after disabling the default Redis user. This confirms the issue: Redis ACL deployments require both username and password.
+
+In the codebase, `REDIS_PASSWORD` exists across service environment models and Redis config objects, but `REDIS_USERNAME` is missing from `packages/services`. Redis client constructors currently pass `host`, `port`, `password`, and TLS options, but do not pass `username`.
+
 
 ### Proposed Solution
 
-[High-level description of your fix approach]
+Add support for Redis ACL authentication by allowing GraphQL Hive services to optionally configure and pass a Redis username in addition to a password. The implementation will extend the existing Redis configuration flow while maintaining backward compatibility so that current password-only Redis deployments continue to work without any changes.
+
 
 ### Implementation Plan
 
 Using UMPIRE framework (adapted):
 
-**Understand:** [Restate the problem]
+**Understand:**
 
-**Match:** [What similar patterns/solutions exist in the codebase?]
+GraphQL Hive needs to support Redis ACL authentication for deployments where Redis disables the default user and requires clients to authenticate with both username and password.
 
-**Plan:** [Step-by-step implementation plan]
-1. [Modify file X to do Y]
-2. [Add function Z]
-3. [Update tests]
+**Match:**
 
-**Implement:** [Link to your branch/commits as you work]
+The project already has a consistent Redis configuration pattern across services. I will extend that pattern by adding optional `REDIS_USERNAME` support wherever Redis config is parsed, resolved, documented, and passed into `ioredis`.
 
-**Review:** [Self-review checklist - does it follow the project's contribution guidelines?]
+**Plan:**
 
-**Evaluate:** [How will you verify it works?]
+1. Work on branch `fix-issue-8140`.
+2. Review `docs/DEVELOPMENT.md` and `docs/TESTING.md` before implementation.
+3. Add optional `REDIS_USERNAME` to affected Redis environment models.
+4. Add `username` to resolved Redis config objects.
+5. Pass `username` into shared Redis client helpers and direct `new Redis(...)` constructors.
+6. Update relevant `.env.template` files.
+7. Review affected service README files and update documentation if the new environment variable needs to be exposed to users.
+8. Review self-host/deployment configuration surfaces to determine whether additional propagation is required.
+9. Add a changeset if required by the project's contribution process.
+10. Add or update tests for optional username configuration and Redis client option propagation where practical.
+
+
+**Implement:**
+
+Implementation will be limited to Redis configuration support for issue `#8140`. I will avoid unrelated dependency fixes, including the unrelated `fakePromise` startup blocker.
+
+
+**Review:**
+
+- [ ] Follows existing Redis configuration patterns
+- [ ] Keeps `REDIS_USERNAME` optional
+- [ ] Preserves backward compatibility for password-only Redis deployments
+- [ ] Updates all affected Redis config paths consistently
+- [ ] Updates `.env.template` files
+- [ ] Updates service README documentation where required
+- [ ] Adds a changeset if required
+- [ ] Avoids unrelated source changes
+- [ ] Includes reviewer notes explaining the Redis ACL reproduction
+
+
+
+**Evaluate:** 
+
+I will verify the fix by running the project's recommended validation commands:
+
+```bash
+pnpm build
+pnpm test
+pnpm typecheck
+pnpm lint
+pnpm lint:env-template
+pnpm lint:prettier
+```
+
+I will also re-run the Redis ACL reproduction scenario to confirm:
+
+- Named Redis user + password authentication succeeds
+- Password-only authentication fails when the default user is disabled
+- Hive can pass both `REDIS_USERNAME` and `REDIS_PASSWORD` into Redis
+- Existing password-only Redis deployments continue working when `REDIS_USERNAME` is unset
 
 ---
 
